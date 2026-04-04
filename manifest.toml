@@ -1,0 +1,20 @@
+[skill]
+name = "discord-gateway"
+description = "Bridge Discord messages to Brig"
+kind = "persistent"
+
+[requires]
+network = ["discord.com", "gateway.discord.gg"]
+max_runtime = "forever"
+
+[persistent]
+rc_name = "brig_discord"
+entrypoint = "/usr/local/bin/brig-discord"
+restart_on_failure = true
+depends_on = ["brig"]
+
+[persistent.socket]
+capabilities = ["submit_task", "read_status"]
+
+[secrets]
+discord_token = { env = "BRIG_DISCORD_TOKEN" }
