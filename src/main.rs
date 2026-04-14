@@ -114,11 +114,18 @@ fn main() {
     let socket_path = env::var("BRIG_SOCKET")
         .unwrap_or_else(|_| "/var/brig/sock/brig.sock".to_string());
 
-    eprintln!("brig-discord starting");
+    let gateway_name = env::var("BRIG_GATEWAY_NAME")
+        .unwrap_or_else(|_| "discord-gateway".to_string());
+
+    let session_prefix = env::var("BRIG_SESSION_PREFIX")
+        .unwrap_or_else(|_| "discord".to_string());
+
+    eprintln!("{} starting", gateway_name);
     eprintln!("  socket: {}", socket_path);
+    eprintln!("  session prefix: {}", session_prefix);
 
     loop {
-        if let Err(e) = run_gateway(&token, &socket_path) {
+        if let Err(e) = run_gateway(&token, &socket_path, &gateway_name, &session_prefix) {
             eprintln!("gateway error: {}", e);
             eprintln!("reconnecting in 5 seconds...");
             thread::sleep(Duration::from_secs(5));
@@ -126,9 +133,9 @@ fn main() {
     }
 }
 
-fn run_gateway(token: &str, socket_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn run_gateway(token: &str, socket_path: &str, gateway_name: &str, session_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to brig socket
-    let mut brig = connect_brig(socket_path)?;
+    let mut brig = connect_brig(socket_path, gateway_name)?;
     eprintln!("connected to brig socket");
 
     // Get Discord gateway URL
@@ -197,7 +204,7 @@ fn run_gateway(token: &str, socket_path: &str) -> Result<(), Box<dyn std::error:
     });
 
     // Main message loop
-    let result = message_loop(&mut ws, &mut brig, &sequence, &last_ack, token);
+    let result = message_loop(&mut ws, &mut brig, &sequence, &last_ack, token, session_prefix);
 
     // Clean shutdown
     running.store(false, Ordering::SeqCst);
@@ -206,7 +213,7 @@ fn run_gateway(token: &str, socket_path: &str) -> Result<(), Box<dyn std::error:
     result
 }
 
-fn connect_brig(socket_path: &str) -> Result<BufReader<UnixStream>, Box<dyn std::error::Error>> {
+fn connect_brig(socket_path: &str, gateway_name: &str) -> Result<BufReader<UnixStream>, Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(socket_path)
         .map_err(|e| format!("cannot connect to brig socket at {}: {}", socket_path, e))?;
 
@@ -218,7 +225,7 @@ fn connect_brig(socket_path: &str) -> Result<BufReader<UnixStream>, Box<dyn std:
     // Send hello
     let hello = BrigHello {
         msg_type: "hello".to_string(),
-        name: "discord-gateway".to_string(),
+        name: gateway_name.to_string(),
         version: "0.1.0".to_string(),
     };
     writeln!(reader.get_mut(), "{}", serde_json::to_string(&hello)?)?;
@@ -313,6 +320,7 @@ fn message_loop(
     sequence: &Arc<AtomicU64>,
     last_ack: &Arc<AtomicBool>,
     token: &str,
+    session_prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Set non-blocking for the websocket so we can periodically send heartbeats
     match ws.get_mut() {
@@ -342,13 +350,13 @@ fn message_loop(
             Ok(msg) => {
                 match msg {
                     Message::Text(text) => {
-                        if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token) {
+                        if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix) {
                             eprintln!("error handling message: {}", e);
                         }
                     }
                     Message::Binary(data) => {
                         if let Ok(text) = String::from_utf8(data) {
-                            if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token) {
+                            if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix) {
                                 eprintln!("error handling message: {}", e);
                             }
                         }
@@ -381,6 +389,7 @@ fn handle_gateway_message(
     sequence: &Arc<AtomicU64>,
     last_ack: &Arc<AtomicBool>,
     token: &str,
+    session_prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payload: GatewayPayload = serde_json::from_str(text)?;
 
@@ -395,7 +404,7 @@ fn handle_gateway_message(
             if let Some(ref event_type) = payload.t {
                 if event_type == "MESSAGE_CREATE" {
                     if let Some(d) = payload.d {
-                        handle_message_create(d, brig, token)?;
+                        handle_message_create(d, brig, token, session_prefix)?;
                     }
                 }
             }
@@ -440,6 +449,7 @@ fn handle_message_create(
     data: Value,
     brig: &mut BufReader<UnixStream>,
     token: &str,
+    session_prefix: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let msg: MessageCreate = serde_json::from_value(data)?;
 
@@ -466,7 +476,8 @@ fn handle_message_create(
 
     // Format session key
     let session = format!(
-        "discord-{}-{}-{}",
+        "{}-{}-{}-{}",
+        session_prefix,
         msg.guild_id.as_deref().unwrap_or("dm"),
         msg.channel_id,
         msg.author.id

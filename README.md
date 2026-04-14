@@ -55,7 +55,29 @@ sysrc brig_discord_enable=YES
 ```sh
 export BRIG_DISCORD_TOKEN="your-bot-token-here"
 export BRIG_SOCKET="/var/brig/sock/brig.sock"  # optional, this is the default
+export BRIG_GATEWAY_NAME="discord-gateway"      # optional, identity for brig audit/logging
+export BRIG_SESSION_PREFIX="discord"             # optional, session key prefix
 ./target/release/brig-discord
+```
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `BRIG_DISCORD_TOKEN` | Yes | -- | Bot token from Developer Portal |
+| `BRIG_SOCKET` | No | `/var/brig/sock/brig.sock` | Path to Brig's unix socket |
+| `BRIG_GATEWAY_NAME` | No | `discord-gateway` | Gateway identity for brig (audit/log) |
+| `BRIG_SESSION_PREFIX` | No | `discord` | Session key prefix |
+
+To run multiple bot instances simultaneously, give each a unique gateway name and
+session prefix:
+
+```sh
+# Instance 1: ops bot
+BRIG_DISCORD_TOKEN="ops-token" BRIG_GATEWAY_NAME="discord-ops" BRIG_SESSION_PREFIX="disc-ops" ./target/release/brig-discord
+
+# Instance 2: community bot
+BRIG_DISCORD_TOKEN="community-token" BRIG_GATEWAY_NAME="discord-community" BRIG_SESSION_PREFIX="disc-community" ./target/release/brig-discord
 ```
 
 ## How It Works
@@ -66,7 +88,7 @@ export BRIG_SOCKET="/var/brig/sock/brig.sock"  # optional, this is the default
 4. Sends Identify with bot token and required intents
 5. Listens for MESSAGE_CREATE events
 6. For each non-bot message:
-   - Formats session key as `discord-{guild_id}-{channel_id}-{user_id}`
+   - Formats session key as `{session_prefix}-{guild_id}-{channel_id}-{user_id}`
    - Sends task to Brig socket
    - Reads status updates until final response
    - POSTs response back to Discord channel
@@ -78,9 +100,10 @@ export BRIG_SOCKET="/var/brig/sock/brig.sock"  # optional, this is the default
 Each conversation is identified by a session key:
 
 ```
-discord-{guild_id}-{channel_id}-{user_id}
+{session_prefix}-{guild_id}-{channel_id}-{user_id}
 ```
 
+The default prefix is `discord`, producing keys like `discord-123-456-789`.
 For DMs, `guild_id` is `dm`. This means:
 - Different users in the same channel have separate sessions
 - The same user in different channels has separate sessions
