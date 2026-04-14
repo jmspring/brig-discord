@@ -80,6 +80,13 @@ BRIG_DISCORD_TOKEN="ops-token" BRIG_GATEWAY_NAME="discord-ops" BRIG_SESSION_PREF
 BRIG_DISCORD_TOKEN="community-token" BRIG_GATEWAY_NAME="discord-community" BRIG_SESSION_PREFIX="disc-community" ./target/release/brig-discord
 ```
 
+## Running Multiple Bots
+
+A single binary supports multiple independent bot instances, each with its own
+Discord token, session prefix, and rc.d service.  Example manifests are in
+`contrib/`.  See [docs/GUIDE.md](docs/GUIDE.md#running-multiple-bots) for the
+full walkthrough.
+
 ## How It Works
 
 1. Connects to Brig's unix socket, sends hello, receives welcome

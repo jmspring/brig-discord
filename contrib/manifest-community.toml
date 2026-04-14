@@ -1,0 +1,27 @@
+# Example manifest for a community-facing Discord bot.
+#
+# Copy this file, adjust the name and session prefix, then register
+# it as a separate brig skill.  See docs/GUIDE.md "Running Multiple
+# Bots" for the full walkthrough.
+
+[skill]
+name = "discord-community-bot"
+description = "Discord gateway for community server"
+kind = "persistent"
+
+[requires]
+network = ["discord.com", "gateway.discord.gg"]
+max_runtime = "forever"
+
+[persistent]
+rc_name = "brig_disc_community"
+entrypoint = "/usr/local/bin/brig-discord"
+restart_on_failure = true
+depends_on = ["brig"]
+env = { BRIG_GATEWAY_NAME = "discord-community-bot", BRIG_SESSION_PREFIX = "disc-community" }
+
+[persistent.socket]
+capabilities = ["submit_task", "read_status"]
+
+[secrets]
+discord_token = { env = "BRIG_DISCORD_TOKEN" }
