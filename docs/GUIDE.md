@@ -69,29 +69,34 @@ On the Bot page, confirm these settings:
   to their servers
 - **Requires OAuth2 Code Grant**: leave disabled (not needed)
 
-## Step 2: Build brig-discord
+## Step 2: Build and Install
 
 ```sh
 cd /path/to/brig-discord
-cargo build --release
+make                     # build release binary
+sudo make install        # install binary + skill manifest
 ```
 
-The binary is at `target/release/brig-discord`.
+This installs:
+- `/usr/local/bin/brig-discord`
+- `/usr/local/share/brig/skills/discord-gateway/manifest.toml`
 
-## Step 3: Install
+For development, you can also register the skill directly from the source
+directory instead of using `make install`:
 
-### Option A: Install as a Brig Persistent Skill (Recommended)
+```sh
+cargo build --release
+brig skill add ./
+```
+
+## Step 3: Enable
+
+### Option A: Jailed Mode via Brig (Recommended)
 
 This runs brig-discord inside a FreeBSD jail with network access restricted
 to discord.com and gateway.discord.gg.
 
 ```sh
-# Install the binary where the jail can reach it
-sudo cp target/release/brig-discord /usr/local/bin/
-
-# Register the skill manifest with brig
-brig skill add /path/to/brig-discord/
-
 # Store the bot token (encrypted in ~/.brig/secrets.db)
 brig secret set discord-gateway.discord_token
 # Paste your bot token when prompted
@@ -116,7 +121,17 @@ View logs via syslog:
 grep brig_discord /var/log/messages
 ```
 
-### Option B: Run Manually (For Testing)
+### Option B: Host Service (No Jail)
+
+```sh
+sudo make install-service
+sudo sysrc brig_discord_enable=YES
+sudo sysrc brig_discord_token="your-bot-token"
+sudo sysrc brig_discord_user="jim"
+sudo service brig_discord start
+```
+
+### Option C: Run Manually (For Testing)
 
 ```sh
 export BRIG_DISCORD_TOKEN="your-bot-token"
@@ -338,8 +353,8 @@ between instances:
 - `[skill] name` -- unique skill name for brig's registry
 - `[persistent] rc_name` -- unique rc.d service name
 - `[persistent] env.BRIG_GATEWAY_NAME` -- identity used in brig audit logs
-- `[persistent] env.BRIG_SESSION_PREFIX` -- prefix for session keys (controls
-  memory isolation)
+- `[persistent] env.BRIG_SESSION_PREFIX` -- prefix for session keys (session
+  isolation; the prefix value does not need to be registered with brig)
 
 The `entrypoint` stays the same for all instances: `/usr/local/bin/brig-discord`.
 
@@ -348,8 +363,7 @@ The `entrypoint` stays the same for all instances: `/usr/local/bin/brig-discord`
 Build and install the binary once:
 
 ```sh
-cargo build --release
-sudo cp target/release/brig-discord /usr/local/bin/
+make && sudo make install
 ```
 
 Then register each manifest as a separate skill:
@@ -394,10 +408,16 @@ this means:
 
 ### Per-User Memory Scoping
 
+Brig derives per-user memory scope from session key structure: any key with
+3+ hyphen-delimited segments is scoped as `{first_segment}-{last_segment}`.
+Discord keys have 4 segments, so a key like `disc-ops-guild1-chan1-99999`
+produces memory scope `disc-ops-99999`.  The prefix value does not need to
+be registered with brig — any prefix works automatically.
+
 Within a single bot instance, each Discord user already gets an isolated
-session (the session key includes the user ID).  Across multiple bot instances,
-the session prefix adds another layer of separation.  The result is
-per-user, per-bot memory isolation with no additional configuration.
+memory scope (the session key includes the user ID).  Across multiple bot
+instances, the session prefix adds another layer of separation.  The result
+is per-user, per-bot memory isolation with no additional configuration.
 
 ### Managing Multiple Bots
 

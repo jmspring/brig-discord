@@ -1,0 +1,20 @@
+[
+{ type: install
+  message: <<EOM
+To use brig-discord in jailed mode (recommended):
+
+    brig secret set discord-gateway.discord_token
+    brig skill enable discord-gateway
+
+To use brig-discord as a host service instead:
+
+    sudo make install-service    # from the source directory
+    sysrc brig_discord_enable=YES
+    sysrc brig_discord_token="your-bot-token"
+    sysrc brig_discord_user="jim"
+    service brig_discord start
+
+Do not run both modes simultaneously with the same session prefix.
+EOM
+}
+]

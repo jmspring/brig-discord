@@ -30,24 +30,32 @@ Just synchronous websocket (tungstenite) and HTTP (ureq) calls.
 cargo build --release
 ```
 
-## Install as Brig Skill
+## Install
 
 ```sh
-# Add the skill to brig
-brig skill add ./
+make                     # build release binary
+sudo make install        # install binary + skill manifest
+```
 
-# Set the Discord token
+This installs:
+- `/usr/local/bin/brig-discord`
+- `/usr/local/share/brig/skills/discord-gateway/manifest.toml`
+
+Then enable via brig (jailed, recommended):
+
+```sh
 brig secret set discord-gateway.discord_token
-# (paste your bot token when prompted)
-
-# Enable the persistent skill
 brig skill enable discord-gateway
+```
 
-# Start the service
-service brig_discord start
+Or as a host service (no jail):
 
-# Enable at boot
-sysrc brig_discord_enable=YES
+```sh
+sudo make install-service
+sudo sysrc brig_discord_enable=YES
+sudo sysrc brig_discord_token="your-bot-token"
+sudo sysrc brig_discord_user="jim"
+sudo service brig_discord start
 ```
 
 ## Manual Run
@@ -115,6 +123,11 @@ For DMs, `guild_id` is `dm`. This means:
 - Different users in the same channel have separate sessions
 - The same user in different channels has separate sessions
 - Brig's memory system tracks context per session
+
+Brig derives per-user memory scope from session key structure: any key with
+3+ hyphen-delimited segments gets scoped as `{first_segment}-{last_segment}`
+(i.e., `{prefix}-{user_id}`). The prefix value itself does not need to be
+registered with brig — any prefix works as long as the key has enough segments.
 
 ## Dependencies
 

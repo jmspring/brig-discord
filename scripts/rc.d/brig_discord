@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# PROVIDE: brig_discord
+# REQUIRE: brig NETWORKING
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable brig-discord:
+#
+#   brig_discord_enable="YES"
+#   brig_discord_token="your-bot-token"
+#   brig_discord_user="jim"
+#
+# Optional:
+#   brig_discord_socket="/var/brig/sock/brig.sock"
+#   brig_discord_name="discord-gateway"
+#   brig_discord_prefix="discord"
+
+. /etc/rc.subr
+
+name=brig_discord
+rcvar=brig_discord_enable
+
+load_rc_config $name
+
+: ${brig_discord_enable:="NO"}
+: ${brig_discord_user:="root"}
+: ${brig_discord_token:=""}
+: ${brig_discord_socket:="/var/brig/sock/brig.sock"}
+: ${brig_discord_name:="discord-gateway"}
+: ${brig_discord_prefix:="discord"}
+
+pidfile="/var/run/${name}.pid"
+logfile="/var/log/${name}.log"
+
+command="/usr/sbin/daemon"
+command_args="-f -p ${pidfile} -o ${logfile} -t ${name} \
+    /usr/bin/env \
+    BRIG_DISCORD_TOKEN=${brig_discord_token} \
+    BRIG_SOCKET=${brig_discord_socket} \
+    BRIG_GATEWAY_NAME=${brig_discord_name} \
+    BRIG_SESSION_PREFIX=${brig_discord_prefix} \
+    /usr/local/bin/brig-discord"
+
+start_precmd="brig_discord_prestart"
+stop_postcmd="brig_discord_poststop"
+
+brig_discord_prestart()
+{
+    if [ -z "${brig_discord_token}" ]; then
+        err 1 "brig_discord_token is not set in /etc/rc.conf"
+    fi
+}
+
+brig_discord_poststop()
+{
+    rm -f ${pidfile}
+}
+
+run_rc_command "$1"

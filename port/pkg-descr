@@ -1,0 +1,4 @@
+Discord gateway for Brig.  Bridges Discord bot messages to Brig's unix
+domain socket for LLM-driven task execution.
+
+Synchronous.  No async runtime.  No Discord bot framework.
