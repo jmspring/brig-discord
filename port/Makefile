@@ -1,3 +1,7 @@
+# NOT FOR SUBMISSION — scaffolding only.
+# This port skeleton is not functional without valid distinfo.
+# Do not submit to the FreeBSD ports tree.
+
 PORTNAME=	brig-discord
 DISTVERSION=	0.1.0
 CATEGORIES=	net-im
