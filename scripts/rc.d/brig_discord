@@ -11,6 +11,7 @@
 #   brig_discord_user="jim"
 #
 # Optional:
+#   brig_discord_brig_token=""
 #   brig_discord_socket="/var/brig/sock/brig.sock"
 #   brig_discord_name="discord-gateway"
 #   brig_discord_prefix="discord"
@@ -25,17 +26,18 @@ load_rc_config $name
 : ${brig_discord_enable:="NO"}
 : ${brig_discord_user:="root"}
 : ${brig_discord_token:=""}
+: ${brig_discord_brig_token:=""}
 : ${brig_discord_socket:="/var/brig/sock/brig.sock"}
 : ${brig_discord_name:="discord-gateway"}
 : ${brig_discord_prefix:="discord"}
 
 pidfile="/var/run/${name}.pid"
 logfile="/var/log/${name}.log"
+envfile="/var/run/${name}.env"
 
 command="/usr/sbin/daemon"
 command_args="-f -p ${pidfile} -o ${logfile} -t ${name} \
-    /usr/bin/env \
-    BRIG_DISCORD_TOKEN=${brig_discord_token} \
+    /usr/bin/env -P ${envfile} \
     BRIG_SOCKET=${brig_discord_socket} \
     BRIG_GATEWAY_NAME=${brig_discord_name} \
     BRIG_SESSION_PREFIX=${brig_discord_prefix} \
@@ -49,11 +51,18 @@ brig_discord_prestart()
     if [ -z "${brig_discord_token}" ]; then
         err 1 "brig_discord_token is not set in /etc/rc.conf"
     fi
+
+    install -m 0600 /dev/null "${envfile}"
+    echo "BRIG_DISCORD_TOKEN=${brig_discord_token}" > "${envfile}"
+    if [ -n "${brig_discord_brig_token}" ]; then
+        echo "BRIG_TOKEN=${brig_discord_brig_token}" >> "${envfile}"
+    fi
 }
 
 brig_discord_poststop()
 {
     rm -f ${pidfile}
+    rm -f ${envfile}
 }
 
 run_rc_command "$1"

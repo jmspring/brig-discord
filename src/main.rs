@@ -81,6 +81,8 @@ struct BrigHello {
     msg_type: String,
     name: String,
     version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,14 +107,48 @@ struct BrigTask {
 // --- Main ---
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        eprintln!("brig-discord — Discord gateway for Brig");
+        eprintln!();
+        eprintln!("Usage: brig-discord");
+        eprintln!();
+        eprintln!("Environment variables:");
+        eprintln!("  BRIG_DISCORD_TOKEN    Discord bot token (required)");
+        eprintln!("  BRIG_TOKEN            Brig IPC authentication token (required)");
+        eprintln!("  BRIG_SOCKET           Socket path (default: ~/.brig/sock/brig.sock)");
+        eprintln!("  BRIG_GATEWAY_NAME     Gateway name (default: discord-gateway)");
+        eprintln!("  BRIG_SESSION_PREFIX   Session prefix (default: discord)");
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("brig-discord {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
     let token = env::var("BRIG_DISCORD_TOKEN").unwrap_or_else(|_| {
         eprintln!("error: BRIG_DISCORD_TOKEN environment variable not set");
         eprintln!("Get a bot token from https://discord.com/developers/applications");
         std::process::exit(1);
     });
 
-    let socket_path = env::var("BRIG_SOCKET")
-        .unwrap_or_else(|_| "/var/brig/sock/brig.sock".to_string());
+    let brig_token = match env::var("BRIG_TOKEN") {
+        Ok(t) => Some(t),
+        Err(_) => {
+            eprintln!("warning: BRIG_TOKEN not set — generate one with: brig token create discord-gateway");
+            None
+        }
+    };
+
+    let socket_path = std::env::var("BRIG_SOCKET").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        let user_path = format!("{}/.brig/sock/brig.sock", home);
+        if std::path::Path::new(&user_path).exists() {
+            user_path
+        } else {
+            "/var/brig/sock/brig.sock".into()
+        }
+    });
 
     let gateway_name = env::var("BRIG_GATEWAY_NAME")
         .unwrap_or_else(|_| "discord-gateway".to_string());
@@ -125,7 +161,7 @@ fn main() {
     eprintln!("  session prefix: {}", session_prefix);
 
     loop {
-        if let Err(e) = run_gateway(&token, &socket_path, &gateway_name, &session_prefix) {
+        if let Err(e) = run_gateway(&token, &brig_token, &socket_path, &gateway_name, &session_prefix) {
             eprintln!("gateway error: {}", e);
             eprintln!("reconnecting in 5 seconds...");
             thread::sleep(Duration::from_secs(5));
@@ -133,9 +169,9 @@ fn main() {
     }
 }
 
-fn run_gateway(token: &str, socket_path: &str, gateway_name: &str, session_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gateway_name: &str, session_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to brig socket
-    let mut brig = connect_brig(socket_path, gateway_name)?;
+    let mut brig = connect_brig(socket_path, gateway_name, brig_token)?;
     eprintln!("connected to brig socket");
 
     // Get Discord gateway URL
@@ -213,7 +249,7 @@ fn run_gateway(token: &str, socket_path: &str, gateway_name: &str, session_prefi
     result
 }
 
-fn connect_brig(socket_path: &str, gateway_name: &str) -> Result<BufReader<UnixStream>, Box<dyn std::error::Error>> {
+fn connect_brig(socket_path: &str, gateway_name: &str, brig_token: &Option<String>) -> Result<BufReader<UnixStream>, Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(socket_path)
         .map_err(|e| format!("cannot connect to brig socket at {}: {}", socket_path, e))?;
 
@@ -227,6 +263,7 @@ fn connect_brig(socket_path: &str, gateway_name: &str) -> Result<BufReader<UnixS
         msg_type: "hello".to_string(),
         name: gateway_name.to_string(),
         version: "0.1.0".to_string(),
+        token: brig_token.clone(),
     };
     writeln!(reader.get_mut(), "{}", serde_json::to_string(&hello)?)?;
     reader.get_mut().flush()?;
