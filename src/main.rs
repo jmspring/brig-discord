@@ -119,6 +119,7 @@ fn main() {
         eprintln!("  BRIG_SOCKET           Socket path (default: ~/.brig/sock/brig.sock)");
         eprintln!("  BRIG_GATEWAY_NAME     Gateway name (default: discord-gateway)");
         eprintln!("  BRIG_SESSION_PREFIX   Session prefix (default: discord)");
+        eprintln!("  BRIG_DISCORD_ALLOWED_CHANNELS  Comma-separated channel IDs to listen in");
         std::process::exit(0);
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -156,12 +157,19 @@ fn main() {
     let session_prefix = env::var("BRIG_SESSION_PREFIX")
         .unwrap_or_else(|_| "discord".to_string());
 
+    let allowed_channels: Option<Vec<String>> = env::var("BRIG_DISCORD_ALLOWED_CHANNELS")
+        .ok()
+        .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+
     eprintln!("{} starting", gateway_name);
     eprintln!("  socket: {}", socket_path);
     eprintln!("  session prefix: {}", session_prefix);
+    if let Some(ref channels) = allowed_channels {
+        eprintln!("  allowed channels: {}", channels.join(", "));
+    }
 
     loop {
-        if let Err(e) = run_gateway(&token, &brig_token, &socket_path, &gateway_name, &session_prefix) {
+        if let Err(e) = run_gateway(&token, &brig_token, &socket_path, &gateway_name, &session_prefix, &allowed_channels) {
             eprintln!("gateway error: {}", e);
             eprintln!("reconnecting in 5 seconds...");
             thread::sleep(Duration::from_secs(5));
@@ -169,7 +177,7 @@ fn main() {
     }
 }
 
-fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gateway_name: &str, session_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gateway_name: &str, session_prefix: &str, allowed_channels: &Option<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to brig socket
     let mut brig = connect_brig(socket_path, gateway_name, brig_token)?;
     eprintln!("connected to brig socket");
@@ -240,7 +248,7 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
     });
 
     // Main message loop
-    let result = message_loop(&mut ws, &mut brig, &sequence, &last_ack, token, session_prefix);
+    let result = message_loop(&mut ws, &mut brig, &sequence, &last_ack, token, session_prefix, allowed_channels);
 
     // Clean shutdown
     running.store(false, Ordering::SeqCst);
@@ -269,8 +277,7 @@ fn connect_brig(socket_path: &str, gateway_name: &str, brig_token: &Option<Strin
     reader.get_mut().flush()?;
 
     // Read welcome
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
+    let line = read_line_bounded(&mut reader, BRIG_MAX_MESSAGE_BYTES)?;
     let welcome: BrigMessage = serde_json::from_str(&line)?;
 
     if welcome.msg_type == "error" {
@@ -358,6 +365,7 @@ fn message_loop(
     last_ack: &Arc<AtomicBool>,
     token: &str,
     session_prefix: &str,
+    allowed_channels: &Option<Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Set non-blocking for the websocket so we can periodically send heartbeats
     match ws.get_mut() {
@@ -387,13 +395,13 @@ fn message_loop(
             Ok(msg) => {
                 match msg {
                     Message::Text(text) => {
-                        if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix) {
+                        if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix, allowed_channels) {
                             eprintln!("error handling message: {}", e);
                         }
                     }
                     Message::Binary(data) => {
                         if let Ok(text) = String::from_utf8(data) {
-                            if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix) {
+                            if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix, allowed_channels) {
                                 eprintln!("error handling message: {}", e);
                             }
                         }
@@ -427,6 +435,7 @@ fn handle_gateway_message(
     last_ack: &Arc<AtomicBool>,
     token: &str,
     session_prefix: &str,
+    allowed_channels: &Option<Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payload: GatewayPayload = serde_json::from_str(text)?;
 
@@ -441,7 +450,7 @@ fn handle_gateway_message(
             if let Some(ref event_type) = payload.t {
                 if event_type == "MESSAGE_CREATE" {
                     if let Some(d) = payload.d {
-                        handle_message_create(d, brig, token, session_prefix)?;
+                        handle_message_create(d, brig, token, session_prefix, allowed_channels)?;
                     }
                 }
             }
@@ -487,12 +496,20 @@ fn handle_message_create(
     brig: &mut BufReader<UnixStream>,
     token: &str,
     session_prefix: &str,
+    allowed_channels: &Option<Vec<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let msg: MessageCreate = serde_json::from_value(data)?;
 
     // Ignore bot messages
     if msg.author.bot.unwrap_or(false) {
         return Ok(());
+    }
+
+    // Ignore messages from non-allowed channels
+    if let Some(ref allowed) = allowed_channels {
+        if !allowed.contains(&msg.channel_id) {
+            return Ok(());
+        }
     }
 
     // Ignore empty messages
@@ -538,15 +555,35 @@ fn handle_message_create(
     Ok(())
 }
 
+fn read_line_bounded(reader: &mut BufReader<UnixStream>, max_bytes: usize) -> Result<String, String> {
+    let mut line = String::new();
+    loop {
+        let available = reader.fill_buf().map_err(|e| format!("read error: {}", e))?;
+        if available.is_empty() {
+            if line.is_empty() { return Err("connection closed".into()); }
+            return Ok(line);
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            line.push_str(&String::from_utf8_lossy(&available[..=pos]));
+            reader.consume(pos + 1);
+            return Ok(line);
+        }
+        if line.len() + available.len() > max_bytes {
+            return Err(format!("message exceeds {} byte limit", max_bytes));
+        }
+        line.push_str(&String::from_utf8_lossy(available));
+        let len = available.len();
+        reader.consume(len);
+    }
+}
+
+const BRIG_MAX_MESSAGE_BYTES: usize = 1_048_576; // 1 MB
+
 fn read_brig_response(
     brig: &mut BufReader<UnixStream>
 ) -> Result<String, Box<dyn std::error::Error>> {
     loop {
-        let mut line = String::new();
-        let bytes_read = brig.read_line(&mut line)?;
-        if bytes_read == 0 {
-            return Err("brig socket closed".into());
-        }
+        let line = read_line_bounded(brig, BRIG_MAX_MESSAGE_BYTES)?;
 
         let msg: BrigMessage = serde_json::from_str(&line)?;
 
@@ -586,7 +623,8 @@ fn send_discord_message(
     for chunk in chunks {
         let url = format!("{}/channels/{}/messages", DISCORD_API_BASE, channel_id);
         let body = json!({
-            "content": chunk
+            "content": chunk,
+            "allowed_mentions": {"parse": []}
         });
 
         let json_body = serde_json::to_string(&body)?;
