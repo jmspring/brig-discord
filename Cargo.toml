@@ -1,6 +1,6 @@
 [package]
 name = "brig-discord"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Discord gateway for Brig - bridges Discord messages to Brig's unix socket"
 license = "BSD-2-Clause"
@@ -8,6 +8,6 @@ repository = "https://github.com/jmspring/brig-discord"
 
 [dependencies]
 ureq = "2.9"
-tungstenite = { version = "0.21", features = ["native-tls"] }
+tungstenite = { version = "0.21", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -370,7 +370,7 @@ fn message_loop(
     // Set non-blocking for the websocket so we can periodically send heartbeats
     match ws.get_mut() {
         MaybeTlsStream::Plain(s) => s.set_nonblocking(true)?,
-        MaybeTlsStream::NativeTls(s) => s.get_ref().set_nonblocking(true)?,
+        MaybeTlsStream::Rustls(s) => s.get_ref().set_nonblocking(true)?,
         _ => {} // Best effort for other stream types
     }
 

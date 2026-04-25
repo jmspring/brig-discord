@@ -1,10 +1,11 @@
 # Makefile for brig-discord
 # Uses BSD make conventions. Run with `make` on FreeBSD.
 
+DESTDIR?=
 PREFIX?=	/usr/local
-BINDIR=		${PREFIX}/bin
-SHAREDIR=	${PREFIX}/share/brig
-RCDIR=		${PREFIX}/etc/rc.d
+BINDIR=		${DESTDIR}${PREFIX}/bin
+SHAREDIR=	${DESTDIR}${PREFIX}/share/brig
+RCDIR=		${DESTDIR}${PREFIX}/etc/rc.d
 
 CARGO?=		cargo
 CARGO_FLAGS=	--release
