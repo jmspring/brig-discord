@@ -1,6 +1,6 @@
 [package]
 name = "brig-discord"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Discord gateway for Brig - bridges Discord messages to Brig's unix socket"
 license = "BSD-2-Clause"
