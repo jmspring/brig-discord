@@ -73,9 +73,11 @@ export BRIG_SESSION_PREFIX="discord"             # optional, session key prefix
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `BRIG_DISCORD_TOKEN` | Yes | -- | Bot token from Developer Portal |
-| `BRIG_SOCKET` | No | `/var/brig/sock/brig.sock` | Path to Brig's unix socket |
+| `BRIG_TOKEN` | Yes | -- | Brig IPC authentication token (generate with `brig token create discord-gateway`) |
+| `BRIG_SOCKET` | No | `~/.brig/sock/brig.sock` | Path to Brig's unix socket |
 | `BRIG_GATEWAY_NAME` | No | `discord-gateway` | Gateway identity for brig (audit/log) |
 | `BRIG_SESSION_PREFIX` | No | `discord` | Session key prefix |
+| `BRIG_DISCORD_ALLOWED_CHANNELS` | No | -- | Comma-separated channel IDs to restrict listening (all channels if unset) |
 
 To run multiple bot instances simultaneously, give each a unique gateway name and
 session prefix:

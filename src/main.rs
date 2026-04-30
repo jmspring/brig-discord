@@ -17,10 +17,21 @@ use tungstenite::{connect, Message, WebSocket};
 use tungstenite::stream::MaybeTlsStream;
 
 const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
-const USER_AGENT: &str = "DiscordBot (https://github.com/jmspring/brig-discord, 0.1.0)";
+const USER_AGENT: &str = concat!(
+    "DiscordBot (https://github.com/jmspring/brig-discord, ",
+    env!("CARGO_PKG_VERSION"),
+    ")"
+);
 
-// Gateway intents - we need GUILD_MESSAGES and MESSAGE_CONTENT
-const INTENTS: u64 = (1 << 9) | (1 << 15); // GUILD_MESSAGES | MESSAGE_CONTENT
+// Gateway intents: GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT
+const INTENTS: u64 = (1 << 9) | (1 << 12) | (1 << 15);
+
+// sysexits.h exit codes
+const EX_USAGE: i32 = 64;          // command line usage error or config error
+#[allow(dead_code)]
+const EX_UNAVAILABLE: i32 = 69;    // service unavailable (connection failure)
+#[allow(dead_code)]
+const EX_PROTOCOL: i32 = 76;       // remote protocol error
 
 // --- Discord Gateway Protocol Types ---
 
@@ -109,17 +120,17 @@ struct BrigTask {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        eprintln!("brig-discord — Discord gateway for Brig");
-        eprintln!();
-        eprintln!("Usage: brig-discord");
-        eprintln!();
-        eprintln!("Environment variables:");
-        eprintln!("  BRIG_DISCORD_TOKEN    Discord bot token (required)");
-        eprintln!("  BRIG_TOKEN            Brig IPC authentication token (required)");
-        eprintln!("  BRIG_SOCKET           Socket path (default: ~/.brig/sock/brig.sock)");
-        eprintln!("  BRIG_GATEWAY_NAME     Gateway name (default: discord-gateway)");
-        eprintln!("  BRIG_SESSION_PREFIX   Session prefix (default: discord)");
-        eprintln!("  BRIG_DISCORD_ALLOWED_CHANNELS  Comma-separated channel IDs to listen in");
+        println!("brig-discord — Discord gateway for Brig");
+        println!();
+        println!("Usage: brig-discord");
+        println!();
+        println!("Environment variables:");
+        println!("  BRIG_DISCORD_TOKEN    Discord bot token (required)");
+        println!("  BRIG_TOKEN            Brig IPC authentication token (required)");
+        println!("  BRIG_SOCKET           Socket path (default: ~/.brig/sock/brig.sock)");
+        println!("  BRIG_GATEWAY_NAME     Gateway name (default: discord-gateway)");
+        println!("  BRIG_SESSION_PREFIX   Session prefix (default: discord)");
+        println!("  BRIG_DISCORD_ALLOWED_CHANNELS  Comma-separated channel IDs to listen in");
         std::process::exit(0);
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -128,16 +139,15 @@ fn main() {
     }
 
     let token = env::var("BRIG_DISCORD_TOKEN").unwrap_or_else(|_| {
-        eprintln!("error: BRIG_DISCORD_TOKEN environment variable not set");
-        eprintln!("Get a bot token from https://discord.com/developers/applications");
-        std::process::exit(1);
+        eprintln!("brig-discord: config: BRIG_DISCORD_TOKEN not set — get a bot token from https://discord.com/developers/applications");
+        std::process::exit(EX_USAGE);
     });
 
     let brig_token = match env::var("BRIG_TOKEN") {
         Ok(t) => Some(t),
         Err(_) => {
-            eprintln!("warning: BRIG_TOKEN not set — generate one with: brig token create discord-gateway");
-            None
+            eprintln!("brig-discord: config: BRIG_TOKEN not set — generate one with: brig token create discord-gateway");
+            std::process::exit(EX_USAGE);
         }
     };
 
@@ -170,11 +180,17 @@ fn main() {
 
     loop {
         if let Err(e) = run_gateway(&token, &brig_token, &socket_path, &gateway_name, &session_prefix, &allowed_channels) {
-            eprintln!("gateway error: {}", e);
-            eprintln!("reconnecting in 5 seconds...");
+            eprintln!("brig-discord: gateway: {}", e);
+            eprintln!("brig-discord: gateway: reconnecting in 5 seconds");
             thread::sleep(Duration::from_secs(5));
         }
     }
+}
+
+struct BrigConn {
+    socket_path: String,
+    gateway_name: String,
+    brig_token: Option<String>,
 }
 
 fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gateway_name: &str, session_prefix: &str, allowed_channels: &Option<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
@@ -194,7 +210,7 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
     // Receive Hello (opcode 10)
     let hello = read_gateway_message(&mut ws)?;
     if hello.op != 10 {
-        return Err(format!("expected Hello (op 10), got op {}", hello.op).into());
+        return Err(format!("brig-discord: protocol: expected Hello (op 10), got op {}", hello.op).into());
     }
     let hello_data: HelloPayload = serde_json::from_value(
         hello.d.ok_or("missing Hello payload")?
@@ -221,7 +237,7 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
     // Wait for Ready (opcode 0, type READY)
     let ready = read_gateway_message(&mut ws)?;
     if ready.op != 0 || ready.t.as_deref() != Some("READY") {
-        return Err(format!("expected READY, got op {} type {:?}", ready.op, ready.t).into());
+        return Err(format!("brig-discord: protocol: expected READY, got op {} type {:?}", ready.op, ready.t).into());
     }
     eprintln!("received READY - bot is online");
 
@@ -247,8 +263,14 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
         );
     });
 
+    let brig_conn = BrigConn {
+        socket_path: socket_path.to_string(),
+        gateway_name: gateway_name.to_string(),
+        brig_token: brig_token.clone(),
+    };
+
     // Main message loop
-    let result = message_loop(&mut ws, &mut brig, &sequence, &last_ack, token, session_prefix, allowed_channels);
+    let result = message_loop(&mut ws, &mut brig, &sequence, &last_ack, token, session_prefix, allowed_channels, heartbeat_interval, &brig_conn);
 
     // Clean shutdown
     running.store(false, Ordering::SeqCst);
@@ -259,7 +281,7 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
 
 fn connect_brig(socket_path: &str, gateway_name: &str, brig_token: &Option<String>) -> Result<BufReader<UnixStream>, Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(socket_path)
-        .map_err(|e| format!("cannot connect to brig socket at {}: {}", socket_path, e))?;
+        .map_err(|e| format!("brig-discord: socket: cannot connect to {}: {}", socket_path, e))?;
 
     stream.set_read_timeout(Some(Duration::from_secs(300)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
@@ -270,7 +292,7 @@ fn connect_brig(socket_path: &str, gateway_name: &str, brig_token: &Option<Strin
     let hello = BrigHello {
         msg_type: "hello".to_string(),
         name: gateway_name.to_string(),
-        version: "0.1.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         token: brig_token.clone(),
     };
     writeln!(reader.get_mut(), "{}", serde_json::to_string(&hello)?)?;
@@ -282,18 +304,45 @@ fn connect_brig(socket_path: &str, gateway_name: &str, brig_token: &Option<Strin
 
     if welcome.msg_type == "error" {
         return Err(format!(
-            "brig rejected connection: {} - {}",
+            "brig-discord: socket: brig rejected connection: {} - {}",
             welcome.code.unwrap_or_default(),
             welcome.message.unwrap_or_default()
         ).into());
     }
 
     if welcome.msg_type != "welcome" {
-        return Err(format!("expected welcome, got {}", welcome.msg_type).into());
+        return Err(format!("brig-discord: protocol: expected welcome, got {}", welcome.msg_type).into());
     }
 
     eprintln!("brig capabilities: {:?}", welcome.capabilities);
     Ok(reader)
+}
+
+/// Reconnect to brig socket with exponential backoff (max 3 attempts).
+fn reconnect_brig(
+    socket_path: &str,
+    gateway_name: &str,
+    brig_token: &Option<String>,
+) -> Result<BufReader<UnixStream>, Box<dyn std::error::Error>> {
+    let delays = [1, 2, 4]; // seconds
+    for (attempt, delay) in delays.iter().enumerate() {
+        eprintln!(
+            "brig-discord: socket: reconnecting (attempt {}/{})",
+            attempt + 1,
+            delays.len()
+        );
+        thread::sleep(Duration::from_secs(*delay));
+        match connect_brig(socket_path, gateway_name, brig_token) {
+            Ok(reader) => {
+                eprintln!("brig-discord: socket: reconnected");
+                return Ok(reader);
+            }
+            Err(e) => {
+                eprintln!("brig-discord: socket: reconnect failed: {}", e);
+            }
+        }
+    }
+    Err("brig-discord: socket: all reconnect attempts failed".into())
 }
 
 fn get_gateway_url(token: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -349,7 +398,7 @@ fn heartbeat_loop(
         if last_beat.elapsed() >= interval {
             if !last_ack.load(Ordering::SeqCst) {
                 // No ACK received for last heartbeat - connection is zombie
-                eprintln!("heartbeat: no ACK received, connection may be dead");
+                eprintln!("brig-discord: heartbeat: no ACK received, connection may be dead");
             }
             // Signal that a heartbeat is due (main loop will send it)
             last_ack.store(false, Ordering::SeqCst);
@@ -366,6 +415,8 @@ fn message_loop(
     token: &str,
     session_prefix: &str,
     allowed_channels: &Option<Vec<String>>,
+    heartbeat_interval_ms: u64,
+    brig_conn: &BrigConn,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Set non-blocking for the websocket so we can periodically send heartbeats
     match ws.get_mut() {
@@ -375,7 +426,7 @@ fn message_loop(
     }
 
     let mut last_heartbeat = Instant::now();
-    let heartbeat_interval = Duration::from_secs(41); // ~41.25s is Discord's default
+    let heartbeat_interval = Duration::from_millis(heartbeat_interval_ms);
 
     loop {
         // Check if heartbeat is due
@@ -395,14 +446,14 @@ fn message_loop(
             Ok(msg) => {
                 match msg {
                     Message::Text(text) => {
-                        if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix, allowed_channels) {
-                            eprintln!("error handling message: {}", e);
+                        if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix, allowed_channels, brig_conn) {
+                            eprintln!("brig-discord: dispatch: {}", e);
                         }
                     }
                     Message::Binary(data) => {
                         if let Ok(text) = String::from_utf8(data) {
-                            if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix, allowed_channels) {
-                                eprintln!("error handling message: {}", e);
+                            if let Err(e) = handle_gateway_message(&text, ws, brig, sequence, last_ack, token, session_prefix, allowed_channels, brig_conn) {
+                                eprintln!("brig-discord: dispatch: {}", e);
                             }
                         }
                     }
@@ -410,7 +461,7 @@ fn message_loop(
                         ws.send(Message::Pong(data))?;
                     }
                     Message::Close(frame) => {
-                        eprintln!("websocket closed: {:?}", frame);
+                        eprintln!("brig-discord: gateway: websocket closed: {:?}", frame);
                         return Err("websocket closed".into());
                     }
                     _ => {}
@@ -436,6 +487,7 @@ fn handle_gateway_message(
     token: &str,
     session_prefix: &str,
     allowed_channels: &Option<Vec<String>>,
+    brig_conn: &BrigConn,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let payload: GatewayPayload = serde_json::from_str(text)?;
 
@@ -450,7 +502,7 @@ fn handle_gateway_message(
             if let Some(ref event_type) = payload.t {
                 if event_type == "MESSAGE_CREATE" {
                     if let Some(d) = payload.d {
-                        handle_message_create(d, brig, token, session_prefix, allowed_channels)?;
+                        handle_message_create(d, brig, token, session_prefix, allowed_channels, brig_conn)?;
                     }
                 }
             }
@@ -467,24 +519,24 @@ fn handle_gateway_message(
         }
         // Reconnect
         7 => {
-            eprintln!("server requested reconnect");
+            eprintln!("brig-discord: gateway: server requested reconnect");
             return Err("reconnect requested".into());
         }
         // Invalid session
         9 => {
-            eprintln!("invalid session, will reconnect");
+            eprintln!("brig-discord: gateway: invalid session, will reconnect");
             return Err("invalid session".into());
         }
         // Hello (shouldn't happen mid-session)
         10 => {
-            eprintln!("unexpected Hello");
+            eprintln!("brig-discord: protocol: unexpected Hello mid-session");
         }
         // Heartbeat ACK
         11 => {
             last_ack.store(true, Ordering::SeqCst);
         }
         _ => {
-            eprintln!("unknown opcode: {}", payload.op);
+            eprintln!("brig-discord: protocol: unknown opcode {}", payload.op);
         }
     }
 
@@ -497,6 +549,7 @@ fn handle_message_create(
     token: &str,
     session_prefix: &str,
     allowed_channels: &Option<Vec<String>>,
+    brig_conn: &BrigConn,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let msg: MessageCreate = serde_json::from_value(data)?;
 
@@ -517,15 +570,17 @@ fn handle_message_create(
         return Ok(());
     }
 
+    let preview: String = if msg.content.chars().count() > 50 {
+        let truncated: String = msg.content.chars().take(50).collect();
+        format!("{}...", truncated)
+    } else {
+        msg.content.clone()
+    };
     eprintln!(
         "message from {} in channel {}: {}",
         msg.author.username,
         msg.channel_id,
-        if msg.content.len() > 50 {
-            format!("{}...", &msg.content[..50])
-        } else {
-            msg.content.clone()
-        }
+        preview,
     );
 
     // Format session key
@@ -537,17 +592,30 @@ fn handle_message_create(
         msg.author.id
     );
 
-    // Send task to brig
+    // Send task to brig (with reconnection on failure)
     let task = BrigTask {
         msg_type: "task".to_string(),
         content: msg.content,
         session,
     };
-    writeln!(brig.get_mut(), "{}", serde_json::to_string(&task)?)?;
-    brig.get_mut().flush()?;
+    let task_json = serde_json::to_string(&task)?;
 
-    // Read responses until we get the final response
-    let response_content = read_brig_response(brig)?;
+    let response_content = match send_and_read_brig(brig, &task_json) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("brig-discord: socket: send/read failed: {}", e);
+            // Attempt reconnection
+            let mut new_brig = reconnect_brig(
+                &brig_conn.socket_path,
+                &brig_conn.gateway_name,
+                &brig_conn.brig_token,
+            )?;
+            let content = send_and_read_brig(&mut new_brig, &task_json)?;
+            // Replace the old reader with the reconnected one
+            *brig = new_brig;
+            content
+        }
+    };
 
     // Send response back to Discord
     send_discord_message(token, &msg.channel_id, &response_content)?;
@@ -579,6 +647,15 @@ fn read_line_bounded(reader: &mut BufReader<UnixStream>, max_bytes: usize) -> Re
 
 const BRIG_MAX_MESSAGE_BYTES: usize = 1_048_576; // 1 MB
 
+fn send_and_read_brig(
+    brig: &mut BufReader<UnixStream>,
+    task_json: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    writeln!(brig.get_mut(), "{}", task_json)?;
+    brig.get_mut().flush()?;
+    read_brig_response(brig)
+}
+
 fn read_brig_response(
     brig: &mut BufReader<UnixStream>
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -603,7 +680,7 @@ fn read_brig_response(
                 ));
             }
             other => {
-                eprintln!("unexpected brig message type: {}", other);
+                eprintln!("brig-discord: protocol: unexpected brig message type: {}", other);
                 continue;
             }
         }
@@ -638,7 +715,7 @@ fn send_discord_message(
             Ok(_) => {}
             Err(ureq::Error::Status(code, response)) => {
                 let err_body = response.into_string().unwrap_or_default();
-                eprintln!("discord API error {}: {}", code, err_body);
+                eprintln!("brig-discord: discord: API error {}: {}", code, err_body);
                 // Don't fail completely, just log and continue
             }
             Err(e) => {
@@ -665,22 +742,37 @@ fn split_message(content: &str, max_len: usize) -> Vec<&str> {
     let mut start = 0;
 
     while start < content.len() {
-        let end = if start + max_len >= content.len() {
-            content.len()
-        } else {
-            // Try to split at a newline or space
-            let chunk = &content[start..start + max_len];
-            if let Some(pos) = chunk.rfind('\n') {
-                start + pos + 1
-            } else if let Some(pos) = chunk.rfind(' ') {
-                start + pos + 1
-            } else {
-                start + max_len
-            }
-        };
+        if start + max_len >= content.len() {
+            chunks.push(&content[start..]);
+            break;
+        }
 
-        chunks.push(&content[start..end]);
-        start = end;
+        // Find the last char boundary at or before start + max_len
+        let mut split_at = start + max_len;
+        while split_at > start && !content.is_char_boundary(split_at) {
+            split_at -= 1;
+        }
+        if split_at == start {
+            // Single character wider than max_len — shouldn't happen in practice
+            // but advance past it to avoid infinite loop
+            split_at = start + content[start..].chars().next().map_or(1, |c| c.len_utf8());
+        }
+
+        let chunk = &content[start..split_at];
+
+        // Try to split at a newline or space for readability
+        if let Some(pos) = chunk.rfind('\n') {
+            let end = start + pos + 1;
+            chunks.push(&content[start..end]);
+            start = end;
+        } else if let Some(pos) = chunk.rfind(' ') {
+            let end = start + pos + 1;
+            chunks.push(&content[start..end]);
+            start = end;
+        } else {
+            chunks.push(chunk);
+            start = split_at;
+        }
     }
 
     chunks
