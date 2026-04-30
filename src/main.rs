@@ -171,11 +171,11 @@ fn main() {
         .ok()
         .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
 
-    eprintln!("{} starting", gateway_name);
-    eprintln!("  socket: {}", socket_path);
-    eprintln!("  session prefix: {}", session_prefix);
+    eprintln!("brig-discord: startup: {} starting", gateway_name);
+    eprintln!("brig-discord: startup: socket: {}", socket_path);
+    eprintln!("brig-discord: startup: session prefix: {}", session_prefix);
     if let Some(ref channels) = allowed_channels {
-        eprintln!("  allowed channels: {}", channels.join(", "));
+        eprintln!("brig-discord: startup: allowed channels: {}", channels.join(", "));
     }
 
     loop {
@@ -196,16 +196,16 @@ struct BrigConn {
 fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gateway_name: &str, session_prefix: &str, allowed_channels: &Option<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to brig socket
     let mut brig = connect_brig(socket_path, gateway_name, brig_token)?;
-    eprintln!("connected to brig socket");
+    eprintln!("brig-discord: socket: connected");
 
     // Get Discord gateway URL
     let gateway_url = get_gateway_url(token)?;
-    eprintln!("discord gateway: {}", gateway_url);
+    eprintln!("brig-discord: gateway: url: {}", gateway_url);
 
     // Connect to Discord gateway websocket
     let ws_url = format!("{}/?v=10&encoding=json", gateway_url);
     let (mut ws, _response) = connect(&ws_url)?;
-    eprintln!("connected to discord gateway");
+    eprintln!("brig-discord: gateway: connected");
 
     // Receive Hello (opcode 10)
     let hello = read_gateway_message(&mut ws)?;
@@ -216,7 +216,7 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
         hello.d.ok_or("missing Hello payload")?
     )?;
     let heartbeat_interval = hello_data.heartbeat_interval;
-    eprintln!("heartbeat interval: {}ms", heartbeat_interval);
+    eprintln!("brig-discord: gateway: heartbeat interval: {}ms", heartbeat_interval);
 
     // Send Identify (opcode 2)
     let identify = json!({
@@ -232,14 +232,14 @@ fn run_gateway(token: &str, brig_token: &Option<String>, socket_path: &str, gate
         }
     });
     ws.send(Message::Text(serde_json::to_string(&identify)?))?;
-    eprintln!("sent Identify");
+    eprintln!("brig-discord: gateway: sent Identify");
 
     // Wait for Ready (opcode 0, type READY)
     let ready = read_gateway_message(&mut ws)?;
     if ready.op != 0 || ready.t.as_deref() != Some("READY") {
         return Err(format!("brig-discord: protocol: expected READY, got op {} type {:?}", ready.op, ready.t).into());
     }
-    eprintln!("received READY - bot is online");
+    eprintln!("brig-discord: gateway: received READY - bot is online");
 
     // Shared state for heartbeat thread
     let sequence = Arc::new(AtomicU64::new(0));
@@ -314,7 +314,7 @@ fn connect_brig(socket_path: &str, gateway_name: &str, brig_token: &Option<Strin
         return Err(format!("brig-discord: protocol: expected welcome, got {}", welcome.msg_type).into());
     }
 
-    eprintln!("brig capabilities: {:?}", welcome.capabilities);
+    eprintln!("brig-discord: socket: capabilities: {:?}", welcome.capabilities);
     Ok(reader)
 }
 
@@ -577,7 +577,7 @@ fn handle_message_create(
         msg.content.clone()
     };
     eprintln!(
-        "message from {} in channel {}: {}",
+        "brig-discord: dispatch: message from {} in channel {}: {}",
         msg.author.username,
         msg.channel_id,
         preview,

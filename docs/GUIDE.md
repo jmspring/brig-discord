@@ -141,14 +141,14 @@ export BRIG_DISCORD_TOKEN="your-bot-token"
 The gateway prints status to stderr:
 
 ```
-brig-discord starting
-  socket: /var/brig/sock/brig.sock
-connected to brig socket
-discord gateway: wss://gateway.discord.gg
-connected to discord gateway
-heartbeat interval: 41250ms
-sent Identify
-received READY - bot is online
+brig-discord: startup: discord-gateway starting
+brig-discord: startup: socket: /var/brig/sock/brig.sock
+brig-discord: socket: connected
+brig-discord: gateway: url: wss://gateway.discord.gg
+brig-discord: gateway: connected
+brig-discord: gateway: heartbeat interval: 41250ms
+brig-discord: gateway: sent Identify
+brig-discord: gateway: received READY - bot is online
 ```
 
 ## Step 4: Configure
@@ -158,11 +158,16 @@ received READY - bot is online
 | Variable             | Required | Default                       | Description                     |
 |----------------------|----------|-------------------------------|---------------------------------|
 | `BRIG_DISCORD_TOKEN` | Yes      | --                            | Bot token from Developer Portal |
-| `BRIG_SOCKET`        | No       | `/var/brig/sock/brig.sock`    | Path to Brig's unix socket      |
+| `BRIG_TOKEN`         | Yes      | --                            | Brig IPC authentication token (generate with `brig token create discord-gateway`) |
+| `BRIG_SOCKET`        | No       | `~/.brig/sock/brig.sock`     | Path to Brig's unix socket      |
+| `BRIG_GATEWAY_NAME`  | No       | `discord-gateway`             | Gateway identity for brig (audit/log) |
+| `BRIG_SESSION_PREFIX` | No      | `discord`                     | Session key prefix              |
+| `BRIG_DISCORD_ALLOWED_CHANNELS` | No | --                       | Comma-separated channel IDs to restrict listening (all channels if unset) |
 
 When installed as a persistent skill, `BRIG_DISCORD_TOKEN` is injected
-automatically from brig's secret store. Override `BRIG_SOCKET` only if
-your brig daemon uses a non-default socket path.
+automatically from brig's secret store. `BRIG_TOKEN` is required for
+socket authentication. Override `BRIG_SOCKET` only if your brig daemon
+uses a non-default socket path.
 
 ### Brig Daemon Configuration
 
